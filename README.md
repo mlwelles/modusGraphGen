@@ -105,20 +105,20 @@ directives. Commas appear only within `index=` to separate multiple index types.
 
 ```go
 // Space separates independent directives:
-dgraph:"predicate=initial_release_date index=year"
+InitialReleaseDate time.Time `json:"initialReleaseDate,omitempty" dgraph:"predicate=initial_release_date index=year"`
 
 // Commas separate index tokenizers within index=:
-dgraph:"index=hash,term,trigram,fulltext"
+Name string `json:"name,omitempty" dgraph:"index=hash,term,trigram,fulltext"`
 
 // Forward edge with reverse indexing and count:
-dgraph:"predicate=genre reverse count"
+Genres []Genre `json:"genres,omitempty" dgraph:"predicate=genre reverse count"`
 
 // Reverse edge (BOTH ~ prefix AND reverse keyword required):
-dgraph:"predicate=~genre reverse"
+Films []Film `json:"films,omitempty" dgraph:"predicate=~genre reverse"`
 
 // Standalone flags:
-dgraph:"count"
-dgraph:"upsert"
+Starring []Performance `json:"starring,omitempty" dgraph:"count"`
+Email    string        `json:"email,omitempty" dgraph:"upsert"`
 ```
 
 ### Tag Directives Reference
