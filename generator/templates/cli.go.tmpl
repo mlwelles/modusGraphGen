@@ -1,0 +1,13 @@
+// TODO: Generate Kong CLI with subcommands for each entity.
+// This is a placeholder that generates a valid main.go.
+package main
+
+import "fmt"
+
+func main() {
+	fmt.Println("{{.Name}} CLI - not yet implemented")
+	fmt.Println("Entities:")
+{{- range .Entities}}
+	fmt.Println("  - {{.Name}}")
+{{- end}}
+}

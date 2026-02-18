@@ -16,11 +16,13 @@ import (
 	"log"
 	"os"
 
+	"github.com/mlwelles/modusGraphGen/generator"
 	"github.com/mlwelles/modusGraphGen/parser"
 )
 
 func main() {
 	pkgDir := flag.String("pkg", ".", "path to the target Go package directory")
+	outputDir := flag.String("output", "", "output directory (default: same as -pkg)")
 	flag.Parse()
 
 	// Resolve the package directory.
@@ -31,6 +33,12 @@ func main() {
 		if err != nil {
 			log.Fatalf("failed to get working directory: %v", err)
 		}
+	}
+
+	// Resolve the output directory.
+	outDir := *outputDir
+	if outDir == "" {
+		outDir = dir
 	}
 
 	// Parse phase: extract the model from Go source files.
@@ -47,33 +55,12 @@ func main() {
 			searchInfo = fmt.Sprintf(" (searchable on %s)", e.SearchField)
 		}
 		fmt.Printf("  - %s: %d fields%s\n", e.Name, len(e.Fields), searchInfo)
-		for _, f := range e.Fields {
-			extras := ""
-			if f.IsUID {
-				extras = " [UID]"
-			} else if f.IsDType {
-				extras = " [DType]"
-			} else if f.IsEdge {
-				rev := ""
-				if f.IsReverse {
-					rev = ", reverse"
-				}
-				cnt := ""
-				if f.HasCount {
-					cnt = ", count"
-				}
-				extras = fmt.Sprintf(" [edge -> %s%s%s]", f.EdgeEntity, rev, cnt)
-			}
-			if len(f.Indexes) > 0 {
-				extras += fmt.Sprintf(" indexes=%v", f.Indexes)
-			}
-			if f.Upsert {
-				extras += " upsert"
-			}
-			fmt.Printf("    %s (%s) predicate=%q%s\n", f.Name, f.GoType, f.Predicate, extras)
-		}
 	}
 
-	// TODO: Generate phase - templates will be filled in later.
-	fmt.Println("\n[codegen templates not yet implemented]")
+	// Generate phase: execute templates and write output files.
+	fmt.Printf("\nGenerating code into %s ...\n", outDir)
+	if err := generator.Generate(pkg, outDir); err != nil {
+		log.Fatalf("generation error: %v", err)
+	}
+	fmt.Println("Done.")
 }
