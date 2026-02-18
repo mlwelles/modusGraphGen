@@ -1,30 +1,112 @@
 # modusGraphGen
 
 Code generation tool for [modusgraph](https://github.com/matthewmcneely/modusgraph).
-Reads Go structs with `json` and `dgraph` tags and produces a fully typed client
-library, query builders, auto-paging iterators, and a
-[Kong](https://github.com/alecthomas/kong) CLI. The generated code provides
-type-safe CRUD operations, fulltext search, cursor-based pagination, and
-fluent query building — all derived from your struct definitions.
+Define Go structs, run `go generate`, get a fully typed client library, query
+builders, auto-paging iterators, and a CLI — all derived from your struct
+definitions.
 
-modusGraphGen follows a **struct-first** approach: your Go structs are the
-single source of truth. There are no separate schema files, no manual client
-wiring, and no runtime reflection. The generator parses struct tags at build
-time and emits concrete, readable Go code.
+## Table of Contents
 
-## Install
+- [Overview](#overview)
+- [How to Add to Your Project](#how-to-add-to-your-project)
+- [Struct Tags](#struct-tags)
+  - [The `json` Tag](#the-json-tag)
+  - [The `dgraph` Tag](#the-dgraph-tag)
+  - [Tag Directives Reference](#tag-directives-reference)
+  - [String Index Types](#string-index-types)
+  - [Scalar Index Types](#scalar-index-types)
+  - [When `predicate=` Is Needed](#when-predicate-is-needed)
+  - [Forward vs Reverse Edges](#forward-vs-reverse-edges)
+  - [Complete Struct Example](#complete-struct-example)
+- [Entity Detection](#entity-detection)
+- [What Gets Generated](#what-gets-generated)
+- [Generated API](#generated-api)
+  - [Client Setup](#client-setup)
+  - [CRUD Operations](#crud-operations)
+  - [Fulltext Search](#fulltext-search)
+  - [List with Pagination](#list-with-pagination)
+  - [Query Builder](#query-builder)
+  - [Auto-Paging Iterators](#auto-paging-iterators)
+  - [Generated CLI](#generated-cli)
+- [Flags](#flags)
+- [How It Works](#how-it-works)
+- [Development](#development)
+- [Reference Project](#reference-project)
+- [License](#license)
 
-Add as a tool dependency in your `go.mod` (Go 1.24+):
+## Overview
+
+What if you could have all the convenience and utility promised by ORM tools
+but none of the
+[object-relational impedance mismatch](https://en.wikipedia.org/wiki/Object%E2%80%93relational_impedance_mismatch)
+pain points?
+
+Traditional ORMs map objects to relational tables and spend enormous effort
+papering over the fundamental mismatch: joins become lazy-loaded proxies,
+many-to-many relationships need join tables, hierarchical data gets flattened
+into rows, and queries are either too abstract (losing performance) or too
+literal (losing portability). The impedance mismatch isn't a bug in any
+particular ORM — it's a structural consequence of forcing a graph of objects
+into a grid of rows and columns.
+
+modusGraphGen sidesteps the problem entirely. Instead of mapping objects to
+tables, it maps Go structs directly to a graph database
+([Dgraph](https://dgraph.io)) where the data model *is* a graph of typed
+nodes and edges. Your struct fields become node predicates. Slice fields
+pointing to other structs become edges. Reverse edges are first-class. There
+are no join tables, no N+1 query problems, no lazy-loading surprises.
+
+The workflow is simple:
+
+1. **Define your entities as Go structs** with `json` and `dgraph` tags.
+   Relationships are just typed fields — `[]Genre` on a Film struct *is* the
+   edge, not a foreign key pointing somewhere else.
+
+2. **Run `go generate`**. modusGraphGen reads your structs at build time and
+   emits a complete, type-safe client library: CRUD operations, fulltext
+   search, a fluent query builder, auto-paging iterators, and a command-line
+   tool — all with concrete Go types, no `interface{}` anywhere.
+
+3. **Use the generated code**. `client.Film.Add(ctx, &film)` inserts a film
+   with its edges. `client.Film.Query(ctx).Filter(...).OrderDesc(...).Exec(&results)`
+   builds and runs a query. `client.Film.SearchIter(ctx, "Matrix")` returns a
+   Go 1.23+ range iterator that auto-pages through results. The CLI gives you
+   the same operations from the terminal.
+
+There are no schema files to maintain separately, no migration scripts, no
+runtime reflection, and no query language embedded in string literals that
+only fails at runtime. The struct *is* the schema. The generated code *is*
+the client. Everything is checked at compile time.
+
+For a complete working example with 9 entity types, forward and reverse
+edges, fulltext search, integration tests, and a CLI operating on Dgraph's
+1-million movie dataset, see the
+[modusGraphMoviesProject](https://github.com/mlwelles/modusGraphMoviesProject).
+
+## How to Add to Your Project
+
+### Prerequisites
+
+- **Go 1.24+** — modusGraphGen uses the `tool` directive in `go.mod`
+  (introduced in Go 1.24) and the generated iterators use `range`-over-func
+  (`iter.Seq2`, introduced in Go 1.23)
+- **Dgraph** — either a running Dgraph instance (for `dgraph://` connections)
+  or use modusgraph's embedded mode (for `file://` connections with no
+  external dependencies)
+
+### Step 1: Add modusgraph and modusGraphGen to your module
+
+```sh
+go get github.com/matthewmcneely/modusgraph
+```
+
+Then add the generator as a tool dependency in your `go.mod`:
 
 ```
 tool github.com/mlwelles/modusGraphGen
 ```
 
-Then run:
-
-```sh
-go mod tidy
-```
+Run `go mod tidy` to fetch everything.
 
 For local development with a cloned copy, add a `replace` directive:
 
@@ -32,13 +114,11 @@ For local development with a cloned copy, add a `replace` directive:
 replace github.com/mlwelles/modusGraphGen => ../modusGraphGen
 ```
 
-## Quick Start
+### Step 2: Create a package for your entities
 
-### 1. Define your structs
-
-Create Go structs with `json` and `dgraph` tags. Each struct that has both a
-`UID` field and a `DType` field is recognized as a Dgraph entity and gets its
-own typed sub-client:
+Create a Go package (e.g., `movies/`) and define your entities as structs. A
+struct is recognized as a Dgraph entity when it has both a `UID` field and a
+`DType` field:
 
 ```go
 // movies/film.go
@@ -54,6 +134,11 @@ type Film struct {
     Tagline            string    `json:"tagline,omitempty"`
     Genres             []Genre   `json:"genres,omitempty" dgraph:"predicate=genre reverse count"`
 }
+```
+
+```go
+// movies/genre.go
+package movies
 
 type Genre struct {
     UID   string   `json:"uid,omitempty"`
@@ -63,7 +148,13 @@ type Genre struct {
 }
 ```
 
-### 2. Add a generate directive
+Relationships are expressed directly: `Genres []Genre` on Film is a forward
+edge. `Films []Film` with `predicate=~genre` on Genre is the reverse edge
+back. See [Struct Tags](#struct-tags) for the full reference.
+
+### Step 3: Add a generate directive
+
+Create a small file that tells `go generate` to run modusGraphGen:
 
 ```go
 // movies/generate.go
@@ -72,15 +163,79 @@ package movies
 //go:generate go run github.com/mlwelles/modusGraphGen
 ```
 
-### 3. Run code generation
+### Step 4: Run code generation
 
 ```sh
 go generate ./movies
 ```
 
-This produces typed client code and a Kong CLI in your package directory. All
-generated files end in `_gen.go` so they're easy to identify and gitignore if
-desired.
+This produces `_gen.go` files in your package directory and a CLI at
+`movies/cmd/movies/main.go`. All generated files are clearly marked and can
+be gitignored or committed as you prefer.
+
+### Step 5: Use the generated client
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+
+    "github.com/matthewmcneely/modusgraph"
+    "your-module/movies"
+)
+
+func main() {
+    client, err := movies.New("dgraph://localhost:9080",
+        modusgraph.WithAutoSchema(true),
+    )
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer client.Close()
+
+    ctx := context.Background()
+
+    // Add a genre
+    scifi := &movies.Genre{Name: "Science Fiction"}
+    client.Genre.Add(ctx, scifi)
+
+    // Add a film with an edge to the genre
+    film := &movies.Film{
+        Name:    "The Matrix",
+        Tagline: "Welcome to the Real World",
+        Genres:  []movies.Genre{*scifi},
+    }
+    client.Film.Add(ctx, film)
+    fmt.Println(film.UID) // populated by Dgraph
+
+    // Search, query, iterate — all typed, all generated
+    for f, err := range client.Film.SearchIter(ctx, "Matrix") {
+        if err != nil {
+            log.Fatal(err)
+        }
+        fmt.Printf("%s (%d genres)\n", f.Name, len(f.Genres))
+    }
+}
+```
+
+### Step 6 (optional): Build the CLI
+
+```sh
+go build -o bin/movies ./movies/cmd/movies
+./bin/movies film search "Matrix" --first=5
+./bin/movies genre list --first=20
+```
+
+### Reference implementation
+
+The [modusGraphMoviesProject](https://github.com/mlwelles/modusGraphMoviesProject)
+demonstrates the complete workflow: 9 entity types, forward and reverse
+edges, fulltext search, a Docker Compose setup for Dgraph, a Makefile for
+data loading, integration tests, and the generated CLI. Use it as a starting
+point or a reference for how to structure your own project.
 
 ## Struct Tags
 
@@ -131,6 +286,7 @@ Email    string        `json:"email,omitempty" dgraph:"upsert"`
 | `reverse` | `reverse` | On forward edges: enables `~predicate` queries from the other side. On reverse edges (`predicate=~X`): **required** to set dgman's `ManagedReverse` flag so the edge is expanded in query results |
 | `count` | `count` | Enable `count(predicate)` aggregate queries on this edge |
 | `upsert` | `upsert` | Mark field for upsert deduplication (find-or-create by this value) |
+| `unique` | `unique` | Enforce uniqueness via dgman's upsert-based insert |
 | `type=X` | `type=geo` | Dgraph type hint for non-standard types (geo, password, etc.) |
 
 ### String Index Types
@@ -315,7 +471,7 @@ The generator uses struct tags to decide what to generate:
 ```go
 import (
     "github.com/matthewmcneely/modusgraph"
-    "github.com/your-org/your-project/movies"
+    "your-module/movies"
 )
 
 // Connect to Dgraph via gRPC
